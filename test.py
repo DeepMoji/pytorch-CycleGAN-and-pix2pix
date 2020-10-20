@@ -33,6 +33,11 @@ from models import create_model
 from util.visualizer import save_images
 from util import html
 
+import coremltools as ct
+import torch
+import cv2 as cv
+import numpy as np
+
 
 def original_example():
     print('Running the original example of result creation')
@@ -71,13 +76,63 @@ def original_example():
     webpage.save()  # save the HTML
 
 
+def load_model_with_options():
+    """
+    Load the model details
+    """
+    opt = TestOptions().parse()  # get test options
+    # hard-code some parameters for test
+    opt.num_threads = 0  # test code only supports num_threads = 0
+    opt.batch_size = 1  # test code only supports batch_size = 1
+    opt.serial_batches = True  # disable data shuffling; comment this line if results on randomly chosen images are needed.
+    opt.no_flip = True  # no flip; comment this line if results on flipped images are needed.
+    opt.display_id = -1  # no visdom display; the test code saves the results to a HTML file.
+    dataset = create_dataset(opt)  # create a dataset given opt.dataset_mode and other options
+    model = create_model(opt)  # create a model given opt.model and other options
+    model.setup(opt)  # regular setup: load and print networks; create schedulers
+
+    return opt, model, dataset
+
+
 def model_conversion():
     print('Running model conversion')
-    pass
+    opt, model, dataset = load_model_with_options()
+    if opt.eval:
+        model.eval()
+
+    for i, data in enumerate(dataset):
+        if i >= opt.num_test:  # only apply our model to opt.num_test images.
+            break
+        # set input and run inference
+        model.set_input(data)
+        model.test()
+
+        # Model conversion
+        model.netG.eval()
+        traced_model = torch.jit.trace(model.netG, data['B'])
+
+        ssmodel = ct.convert(
+            traced_model,
+            inputs=[ct.TensorType(name="input1", shape=data['B'].shape)]  # name "input_1" is used in 'quickstart'
+            # inputs=[ct.ImageType(name="input_1", shape=data['B'].shape)]  # name "input_1" is used in 'quickstart'
+        )
+        # Check conversion
+        res = ssmodel.predict({"input1": data['B'].numpy()})
+        img = np.zeros((res['226'].shape[2], res['226'].shape[3], 3))
+        for k in range(3):
+            img[:, :, k] = 255 * res['226'][0, 2-k, :, :]
+        cv.imwrite(opt.res_img, img)
+        ssmodel.save(opt.model_path)
+        break
 
 
 if __name__ == '__main__':
     print('Before running the script, make sure:')
     print('that you put the pretrained model in facades_pix2pix')
     print('and facades/train, facades/test, facades/validation with images in datasets')
-    original_example()
+    print('http://cmp.felk.cvut.cz/~tylecr1/facade/')
+    print('pip install -r requirements.txt.')
+    print('--dataroot ./datasets/facades --gpu_ids -1 --direction BtoA --model pix2pix --name '
+          'facades_pix2pix --res_img path_to_img.jpg --model_path path_to_model.mlmodel')
+    # original_example()
+    model_conversion()
