@@ -32,11 +32,13 @@ from data import create_dataset
 from models import create_model
 from util.visualizer import save_images
 from util import html
+import torchvision.transforms as transforms
 
 import coremltools as ct
 import torch
 import cv2 as cv
 import numpy as np
+from PIL import Image
 
 
 def original_example():
@@ -87,49 +89,81 @@ def load_model_with_options():
     opt.serial_batches = True  # disable data shuffling; comment this line if results on randomly chosen images are needed.
     opt.no_flip = True  # no flip; comment this line if results on flipped images are needed.
     opt.display_id = -1  # no visdom display; the test code saves the results to a HTML file.
-    dataset = create_dataset(opt)  # create a dataset given opt.dataset_mode and other options
+    # dataset = create_dataset(opt)  # create a dataset given opt.dataset_mode and other options
     model = create_model(opt)  # create a model given opt.model and other options
     model.setup(opt)  # regular setup: load and print networks; create schedulers
 
-    return opt, model, dataset
+    return opt, model
+
+def create_normalized_tensor(image_name):
+    """
+    Create normalized tensor given image path
+    :param image_name: image path
+    :return: image tensor
+    """
+    input_img = Image.open(image_name)
+    transforms_train = [transforms.Resize(256, 256), transforms.ToTensor(),
+                        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
+    # Normalize the tensor
+    input_tensor = input_img
+    for t in transforms_train:
+        input_tensor = t(input_tensor)
+    input_tensor = torch.unsqueeze(input_tensor, 0)
+    return input_tensor
+
+
+def write_clmodel_res(out_name, res_img):
+    """
+    Save the result of model prediction
+    :param out_name:
+    :param res: result of the prediction
+    :return:
+    """
+    img = np.zeros((res_img.shape[2], res_img.shape[3], 3))
+    for k in range(3):
+        img[:, :, k] = 255 * res_img[0, 2 - k, :, :]
+    cv.imwrite(out_name, img)
 
 
 def model_conversion():
     print('Running model conversion')
-    opt, model, dataset = load_model_with_options()
+    opt, model = load_model_with_options()
     if opt.eval:
         model.eval()
 
-    for i, data in enumerate(dataset):
-        if i >= opt.num_test:  # only apply our model to opt.num_test images.
-            break
-        # set input and run inference
-        model.set_input(data)
-        model.test()
+    # Read image and create input tensor
+    input_tensor = create_normalized_tensor(opt.input_img)
 
-        # Model conversion
-        model.netG.eval()
-        traced_model = torch.jit.trace(model.netG, data['B'])
+    # Model conversion
+    model.netG.eval()
+    # # Step 1 - create a traced model
+    traced_model = torch.jit.trace(model.netG, input_tensor)
 
+    if opt.core_input == 'image':
         ssmodel = ct.convert(
             traced_model,
-            inputs=[ct.TensorType(name="input1", shape=data['B'].shape)]  # name "input_1" is used in 'quickstart'
-            # inputs=[ct.ImageType(name="input_1", shape=data['B'].shape)]  # name "input_1" is used in 'quickstart'
+            inputs=[ct.ImageType(name="input1", shape=input_tensor.shape, bias=[-1, -1, -1], scale=1 / 127.0)]
         )
-        # Check conversion
-        res = ssmodel.predict({"input1": data['B'].numpy()})
-        img = np.zeros((res['226'].shape[2], res['226'].shape[3], 3))
-        for k in range(3):
-            img[:, :, k] = 255 * res['226'][0, 2-k, :, :]
-        cv.imwrite(opt.res_img, img)
         ssmodel.save(opt.model_path)
-        break
+        # Test model
+        input_img = Image.open(opt.input_img)
+        res = ssmodel.predict({"input1": input_img})
+    elif opt.core_input == 'tensor':
+        ssmodel = ct.convert(
+            traced_model,
+            inputs=[ct.TensorType(name="input1", shape=input_tensor.shape)]
+        )
+        ssmodel.save(opt.model_path)
+        # Test model
+        res = ssmodel.predict({"input1": input_tensor.numpy()})
+
+    if opt.res_img != '':
+        write_clmodel_res(opt.res_img, res['226'])
 
 
 if __name__ == '__main__':
     print('Before running the script, make sure:')
     print('that you put the pretrained model in facades_pix2pix')
-    print('and facades/train, facades/test, facades/validation with images in datasets')
     print('http://cmp.felk.cvut.cz/~tylecr1/facade/')
     print('pip install -r requirements.txt.')
     print('--dataroot ./datasets/facades --gpu_ids -1 --direction BtoA --model pix2pix --name '

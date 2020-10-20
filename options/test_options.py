@@ -21,5 +21,7 @@ class TestOptions(BaseOptions):
         parser.set_defaults(load_size=parser.get_default('crop_size'))
         parser.add_argument('--res_img', type=str, default='', help='path to result image')
         parser.add_argument('--model_path', type=str, default='', help='path to output mode')
+        parser.add_argument('--core_input', type=str, default='tensor', help='tensor, image')
+        parser.add_argument('--input_img', type=str, default='tensor', help='path to input image')
         self.isTrain = False
         return parser
