@@ -3,6 +3,9 @@
 
 <br><br><br>
 
+# DeepMoji changes
+Make sure you use requirements txt and not environment.yml
+
 # CycleGAN and pix2pix in PyTorch
 
 **New**:  Please check out [contrastive-unpaired-translation](https://github.com/taesungp/contrastive-unpaired-translation) (CUT), our new unpaired image-to-image translation model that enables fast and memory-efficient training.
